@@ -5,7 +5,7 @@ description: Project rules, schema, API contract, and conventions for the BahayH
 
 # BahayHub Backend
 
-Backend for **BahayHub**, a real estate listing and inquiry platform for **Butuan City, Agusan del Norte** only. Course: ITE 18 (Application Development and Emerging Technologies), Caraga State University. Team: Lugsanay (auth, users, favorites, inquiries, appointments, admin stats, deployment) and Magbanua (DB, migrations, properties, images, catalogs, payments, Swagger/Postman). The frontend is a separate TypeScript SPA built by the partner pair. **The API contract in this file is shared with them. Never change a route, field name, or error code without flagging it as a contract change.**
+Backend for **BahayHub**, a real estate listing and inquiry platform for **Butuan City, Agusan del Norte** only. Course: ITE 18 (Application Development and Emerging Technologies), Caraga State University. Team: Lugsanay and Magbanua (original Rev 2 split). For the Final, Lugsanay builds the whole backend with AI assistance; Magbanua reviews PRs and runs the Postman/Newman collection (see Working mode). The frontend is a separate TypeScript SPA built by the partner pair. **The API contract in this file is shared with them. Never change a route, field name, or error code without flagging it as a contract change.**
 
 Status: Rev 2 design is the pre-development baseline. Source code is built for the Final (target Dec 6, 2026).
 
@@ -18,30 +18,44 @@ Status: Rev 2 design is the pre-development baseline. Source code is built for t
 
 ## Stack (fixed by the course and the design)
 
-| Concern | Choice |
-|---|---|
-| Framework | NestJS (Node.js 20 LTS, TypeScript), modular monolith |
-| DB | PostgreSQL 15+ |
-| ORM | TypeORM with versioned migrations. `synchronize` is **never** true outside throwaway local dev |
-| Auth | JWT access (15 min) + rotating refresh token (7 days, httpOnly cookie) tracked in `refresh_tokens` |
-| Validation | class-validator + class-transformer, global `ValidationPipe` (`whitelist`, `forbidNonWhitelisted`, `transform`) |
-| Images | Cloudinary (never local disk) |
-| Payments | PayMongo hosted checkout, **sandbox/test keys only** |
-| Hosting | Render (web service + managed Postgres), deploys from `main` |
-| Docs/tests | Swagger at `/api/docs`, Postman (+ Newman), Jest, Supertest |
-| Security libs | Helmet, `@nestjs/throttler`, bcrypt (cost 12), cookie-parser |
+| Concern       | Choice                                                                                                                                                |
+| ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Framework     | NestJS 12 (Node.js 22.12+ or 20.19+, TypeScript 6), modular monolith                                                                                  |
+| DB            | PostgreSQL 15+                                                                                                                                        |
+| ORM           | TypeORM with versioned migrations. `synchronize` is **never** true outside throwaway local dev                                                        |
+| Auth          | JWT access (15 min) + rotating refresh token (7 days, httpOnly cookie) tracked in `refresh_tokens`                                                    |
+| Validation    | class-validator + class-transformer, global `ValidationPipe` (`whitelist`, `forbidNonWhitelisted`, `transform`)                                       |
+| Images        | Cloudinary (never local disk)                                                                                                                         |
+| Payments      | PayMongo hosted checkout, **sandbox/test keys only**                                                                                                  |
+| Hosting       | Render (web service + managed Postgres), deploys from `main`                                                                                          |
+| Docs/tests    | Swagger at `/api/docs` (enable the `@nestjs/swagger` CLI plugin in `nest-cli.json` so DTO schemas are generated), Postman (+ Newman), Jest, Supertest |
+| Security libs | Helmet, `@nestjs/throttler`, bcrypt (cost 12), cookie-parser                                                                                          |
+
+## Installed versions and pitfalls (read before generating any code)
+
+Installed in the repo: `@nestjs/* ^12`, `typeorm ^1.1.2`, `@nestjs/typeorm ^12`, `@nestjs/throttler ^6.7.1`, `class-validator ^0.15`, `class-transformer ^0.5`, `joi ^18`, `bcrypt ^6`, `helmet ^8`, `passport-jwt ^4`, `pg ^8`.
+
+Your training data likely favors **NestJS 11 and TypeORM 0.3**. Do not write code from memory of those versions. When unsure of an API, check the installed package's types or docs first.
+
+- **Node**: runtime needs 20.19+ or 22.12+. The Nest CLI (`nest new/generate/upgrade`) needs newer minimums (22.22.3+ or 24.15+). Verify with `node -v` before debugging odd errors.
+- **TypeScript 6**, `tsconfig` target `ES2023` (TypeORM 1.x minimum target).
+- **TypeORM 1.x removed or changed**: `findByIds` / `findOneById` (use `findBy` with `In`), the `Connection` alias (use `DataSource`), `TYPEORM_*` env vars and dotenv auto-loading (configure `DataSource` explicitly from the validated config), `sqlite3`/`mysql` drivers, legacy naming strategies moved to `@typeorm/legacy-naming-strategies`. Invalid `where` values now **throw** instead of being ignored, so **never pass `undefined` into `where`**. Build optional search filters conditionally with QueryBuilder.
+- **Postgres enums**: TypeORM 1.x uses `ALTER TYPE ... ADD VALUE` when adding enum values. Still write enum types and partial indexes as raw SQL in migrations.
+- **Joi 18** works with Nest 12 config validation (Joi must be v18+).
+- **Throttler 6** may not list Nest 12 as a declared peer. If it causes problems, check `npm ls @nestjs/throttler` before changing anything else.
+- Nest 12 packages are ESM-ready, but CommonJS projects keep working via `require()` on supported Node versions. Keep the project's existing module format; do not convert it to ESM unless asked.
 
 ## Architecture rules
 
 Request pipeline: middleware (Helmet, CORS allow-list, throttler, cookie-parser, rawBody, logger) → guards (JwtAuthGuard, OptionalJwtAuthGuard, RolesGuard, WebhookSignatureGuard) → ValidationPipe → controller → service → repository → PostgreSQL.
 
-| Layer | Does | Must not |
-|---|---|---|
-| Controller | Route + method mapping, read DTOs, return result | Business rules, DB access |
-| Service | Ownership checks, status transitions, double-booking check, bcrypt, token rotation, pagination, payable amount, gateway session, idempotent webhook | Touch `req`/`res` |
-| Repository (TypeORM) | Only layer that talks to Postgres: queries, transactions | Decide who may do what |
-| DTO/Entity | DTOs validate/shape I/O; entities map tables | Expose `password_hash` or internal columns |
-| Guards/Pipes/Filters | Authn, role checks, validation, signature check, uniform errors | Hold feature logic |
+| Layer                | Does                                                                                                                                                | Must not                                   |
+| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ |
+| Controller           | Route + method mapping, read DTOs, return result                                                                                                    | Business rules, DB access                  |
+| Service              | Ownership checks, status transitions, double-booking check, bcrypt, token rotation, pagination, payable amount, gateway session, idempotent webhook | Touch `req`/`res`                          |
+| Repository (TypeORM) | Only layer that talks to Postgres: queries, transactions                                                                                            | Decide who may do what                     |
+| DTO/Entity           | DTOs validate/shape I/O; entities map tables                                                                                                        | Expose `password_hash` or internal columns |
+| Guards/Pipes/Filters | Authn, role checks, validation, signature check, uniform errors                                                                                     | Hold feature logic                         |
 
 - Guards check **role**; services check **ownership**.
 - A global exception filter and response interceptor produce the response envelopes below.
@@ -149,50 +163,50 @@ Base path `/api`. Swagger at `/api/docs`. 56 endpoint-method combinations.
 
 ### Routes
 
-| Area | Method + path | Access |
-|---|---|---|
-| Auth | POST `/auth/register` (always role client) | Public |
-| | POST `/auth/login` | Public |
-| | POST `/auth/refresh` | Public (valid refresh cookie) |
-| | POST `/auth/logout`, GET `/auth/me` | Logged in |
-| Users | GET `/users` (filter role, status, search), POST `/users` (create agent/admin), GET `/users/:id`, PATCH `/users/:id`, DELETE `/users/:id` (soft; not the last admin) | Admin |
-| | GET `/users/me`, PATCH `/users/me`, PATCH `/users/me/password` | Logged in |
-| Roles | GET `/roles` | Admin |
-| Properties | GET `/properties`, GET `/properties/:id` (include `reservationFee`, `canPayOnline`) | Public (optional JWT) |
-| | GET `/properties/mine` | Agent |
-| | POST `/properties` (agent: own; admin: must pass `agentId`) | Agent, Admin |
-| | PATCH `/properties/:id`, PATCH `/:id/status`, PUT `/:id/amenities`, DELETE `/:id` (soft) | Agent (owner), Admin |
-| Images | POST `/properties/:id/images` (multipart), PATCH/DELETE `/properties/:id/images/:imageId` | Agent (owner), Admin |
-| Catalogs | GET `/property-types`, `/amenities`, `/meta/barangays`, `/appointment-statuses` | Public |
-| | POST/PATCH/DELETE `/property-types[/:id]`, `/amenities[/:id]` (delete blocked while in use) | Admin |
-| Favorites | GET `/favorites`, POST `/favorites` `{propertyId}` (idempotent), DELETE `/favorites/:propertyId` | Client |
-| Inquiries | POST `/properties/:id/inquiries` | Client |
-| | GET `/inquiries` (client own, agent own listings, admin all), GET `/inquiries/:id`, GET/POST `/inquiries/:id/messages` | Involved client/agent, Admin |
-| | PATCH `/inquiries/:id` (read, closed; `replied` is automatic on first agent message) | Agent (owner), Admin |
-| | DELETE `/inquiries/:id` | Admin |
-| Appointments | POST `/properties/:id/appointments` `{scheduledAt, notes}` | Client |
-| | GET `/appointments`, GET `/appointments/:id` | Involved, Admin |
-| | PATCH `/appointments/:id` (client: reschedule/cancel own pending; agent: confirm/cancel/complete) | Client (own), Agent (owner), Admin |
-| | DELETE `/appointments/:id` (cleanup only) | Admin |
-| Payments | POST `/properties/:id/payments` `{appointmentId?}` | Client |
-| | GET `/payments` (filters status, propertyId), GET `/payments/:id` | Client own, Agent own listings, Admin |
-| | PATCH `/payments/:id` `{status:"refunded", note?}` (paid → refunded only) | Admin |
-| | POST `/payments/webhook` | Public, signature verified |
-| Admin | GET `/admin/stats` | Admin |
+| Area         | Method + path                                                                                                                                                        | Access                                |
+| ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------- |
+| Auth         | POST `/auth/register` (always role client)                                                                                                                           | Public                                |
+|              | POST `/auth/login`                                                                                                                                                   | Public                                |
+|              | POST `/auth/refresh`                                                                                                                                                 | Public (valid refresh cookie)         |
+|              | POST `/auth/logout`, GET `/auth/me`                                                                                                                                  | Logged in                             |
+| Users        | GET `/users` (filter role, status, search), POST `/users` (create agent/admin), GET `/users/:id`, PATCH `/users/:id`, DELETE `/users/:id` (soft; not the last admin) | Admin                                 |
+|              | GET `/users/me`, PATCH `/users/me`, PATCH `/users/me/password`                                                                                                       | Logged in                             |
+| Roles        | GET `/roles`                                                                                                                                                         | Admin                                 |
+| Properties   | GET `/properties`, GET `/properties/:id` (include `reservationFee`, `canPayOnline`)                                                                                  | Public (optional JWT)                 |
+|              | GET `/properties/mine`                                                                                                                                               | Agent                                 |
+|              | POST `/properties` (agent: own; admin: must pass `agentId`)                                                                                                          | Agent, Admin                          |
+|              | PATCH `/properties/:id`, PATCH `/:id/status`, PUT `/:id/amenities`, DELETE `/:id` (soft)                                                                             | Agent (owner), Admin                  |
+| Images       | POST `/properties/:id/images` (multipart), PATCH/DELETE `/properties/:id/images/:imageId`                                                                            | Agent (owner), Admin                  |
+| Catalogs     | GET `/property-types`, `/amenities`, `/meta/barangays`, `/appointment-statuses`                                                                                      | Public                                |
+|              | POST/PATCH/DELETE `/property-types[/:id]`, `/amenities[/:id]` (delete blocked while in use)                                                                          | Admin                                 |
+| Favorites    | GET `/favorites`, POST `/favorites` `{propertyId}` (idempotent), DELETE `/favorites/:propertyId`                                                                     | Client                                |
+| Inquiries    | POST `/properties/:id/inquiries`                                                                                                                                     | Client                                |
+|              | GET `/inquiries` (client own, agent own listings, admin all), GET `/inquiries/:id`, GET/POST `/inquiries/:id/messages`                                               | Involved client/agent, Admin          |
+|              | PATCH `/inquiries/:id` (read, closed; `replied` is automatic on first agent message)                                                                                 | Agent (owner), Admin                  |
+|              | DELETE `/inquiries/:id`                                                                                                                                              | Admin                                 |
+| Appointments | POST `/properties/:id/appointments` `{scheduledAt, notes}`                                                                                                           | Client                                |
+|              | GET `/appointments`, GET `/appointments/:id`                                                                                                                         | Involved, Admin                       |
+|              | PATCH `/appointments/:id` (client: reschedule/cancel own pending; agent: confirm/cancel/complete)                                                                    | Client (own), Agent (owner), Admin    |
+|              | DELETE `/appointments/:id` (cleanup only)                                                                                                                            | Admin                                 |
+| Payments     | POST `/properties/:id/payments` `{appointmentId?}`                                                                                                                   | Client                                |
+|              | GET `/payments` (filters status, propertyId), GET `/payments/:id`                                                                                                    | Client own, Agent own listings, Admin |
+|              | PATCH `/payments/:id` `{status:"refunded", note?}` (paid → refunded only)                                                                                            | Admin                                 |
+|              | POST `/payments/webhook`                                                                                                                                             | Public, signature verified            |
+| Admin        | GET `/admin/stats`                                                                                                                                                   | Admin                                 |
 
 ### Status codes and error codes
 
-| Status | Codes |
-|---|---|
-| 400 | VALIDATION_ERROR |
-| 401 | UNAUTHORIZED, INVALID_CREDENTIALS, TOKEN_EXPIRED, TOKEN_REVOKED, INVALID_SIGNATURE |
-| 403 | FORBIDDEN (wrong role or not owner) |
-| 404 | NOT_FOUND (missing or soft-deleted) |
-| 409 | CONFLICT, PAYMENT_ALREADY_PENDING, PROPERTY_NOT_PAYABLE, INVALID_STATUS_TRANSITION |
-| 413 / 415 | PAYLOAD_TOO_LARGE, UNSUPPORTED_MEDIA_TYPE |
-| 429 | TOO_MANY_REQUESTS |
-| 500 | INTERNAL_ERROR (log with request id; never leak stack traces) |
-| 502 | PAYMENT_GATEWAY_ERROR (mark pending row `failed`) |
+| Status    | Codes                                                                              |
+| --------- | ---------------------------------------------------------------------------------- |
+| 400       | VALIDATION_ERROR                                                                   |
+| 401       | UNAUTHORIZED, INVALID_CREDENTIALS, TOKEN_EXPIRED, TOKEN_REVOKED, INVALID_SIGNATURE |
+| 403       | FORBIDDEN (wrong role or not owner)                                                |
+| 404       | NOT_FOUND (missing or soft-deleted)                                                |
+| 409       | CONFLICT, PAYMENT_ALREADY_PENDING, PROPERTY_NOT_PAYABLE, INVALID_STATUS_TRANSITION |
+| 413 / 415 | PAYLOAD_TOO_LARGE, UNSUPPORTED_MEDIA_TYPE                                          |
+| 429       | TOO_MANY_REQUESTS                                                                  |
+| 500       | INTERNAL_ERROR (log with request id; never leak stack traces)                      |
+| 502       | PAYMENT_GATEWAY_ERROR (mark pending row `failed`)                                  |
 
 Also 200, 201, 204 (deletes). Login errors use one generic message so the API never reveals whether an email exists.
 
@@ -210,12 +224,12 @@ Permission matrix summary: guests browse and read catalogs; clients own favorite
 
 ## Status lifecycles (others return 409 `INVALID_STATUS_TRANSITION`)
 
-| Field | Allowed transitions | Who |
-|---|---|---|
-| properties.status | available → reserved/sold/rented; reserved → available/sold/rented | Agent (owner), Admin |
-| inquiries.status | new → read → replied → closed; new → replied/closed; read → closed | Agent (owner), Admin |
-| appointments | pending → confirmed (agent); pending → cancelled (client or agent); confirmed → cancelled/completed (agent). cancelled and completed are final (`is_final`) | As listed |
-| payment_logs.status | pending → paid/failed/cancelled (webhook or lazy expiry); paid → refunded (admin). failed, cancelled, refunded are final. A new attempt creates a new row | Webhook, Admin |
+| Field               | Allowed transitions                                                                                                                                         | Who                  |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------- |
+| properties.status   | available → reserved/sold/rented; reserved → available/sold/rented                                                                                          | Agent (owner), Admin |
+| inquiries.status    | new → read → replied → closed; new → replied/closed; read → closed                                                                                          | Agent (owner), Admin |
+| appointments        | pending → confirmed (agent); pending → cancelled (client or agent); confirmed → cancelled/completed (agent). cancelled and completed are final (`is_final`) | As listed            |
+| payment_logs.status | pending → paid/failed/cancelled (webhook or lazy expiry); paid → refunded (admin). failed, cancelled, refunded are final. A new attempt creates a new row   | Webhook, Admin       |
 
 A paid fee does **not** auto-change listing status. The owning agent sets `reserved` (avoids a race between two paying clients).
 
@@ -233,26 +247,26 @@ Never store card or wallet details, payer name, phone, or address. Never log sec
 
 ## Validation rules (DTOs and matching DB constraints)
 
-| Field | Rule |
-|---|---|
-| email | valid, ≤150, lowercased, unique |
-| password | 8–72 chars, ≥1 upper, ≥1 lower, ≥1 digit |
-| firstName, lastName | 1–60; letters, spaces, hyphens, periods, "ñ" |
-| phone | optional; `09XXXXXXXXX` or `+639XXXXXXXXX` |
-| title / description | title 5–150; description ≤5000 |
-| price | >0, ≤2 decimals, max 999,999,999,999.99 |
-| reservationFee | optional, >0, ≤2 decimals, ≤ price; `null` disables online payment |
-| bedrooms, bathrooms | integers 0–50 |
-| floorAreaSqm, lotAreaSqm | optional, >0 |
-| address.city / province | must be exactly "Butuan City" / "Agusan del Norte" |
-| address.barangay / street | barangay required and in official Butuan list; street 3–255 |
-| inquiry message | first 10–2000; replies 1–2000 |
-| agentId (create listing) | required only for Admin and must be an agent user; rejected for Agent callers |
-| scheduledAt | ISO 8601, future, within 60 days, 08:00–18:00 Manila, minutes 00/30, seconds 0, slot not already active for that property |
-| appointment status | a name from `/appointment-statuses`, transition allowed |
-| payment appointmentId | optional; caller's own, same listing, pending or confirmed |
-| payment PATCH status | only `refunded`, only from `paid` |
-| query params | page ≥1, limit 1–50, minPrice ≤ maxPrice, unknown sort rejected |
+| Field                     | Rule                                                                                                                      |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| email                     | valid, ≤150, lowercased, unique                                                                                           |
+| password                  | 8–72 chars, ≥1 upper, ≥1 lower, ≥1 digit                                                                                  |
+| firstName, lastName       | 1–60; letters, spaces, hyphens, periods, "ñ"                                                                              |
+| phone                     | optional; `09XXXXXXXXX` or `+639XXXXXXXXX`                                                                                |
+| title / description       | title 5–150; description ≤5000                                                                                            |
+| price                     | >0, ≤2 decimals, max 999,999,999,999.99                                                                                   |
+| reservationFee            | optional, >0, ≤2 decimals, ≤ price; `null` disables online payment                                                        |
+| bedrooms, bathrooms       | integers 0–50                                                                                                             |
+| floorAreaSqm, lotAreaSqm  | optional, >0                                                                                                              |
+| address.city / province   | must be exactly "Butuan City" / "Agusan del Norte"                                                                        |
+| address.barangay / street | barangay required and in official Butuan list; street 3–255                                                               |
+| inquiry message           | first 10–2000; replies 1–2000                                                                                             |
+| agentId (create listing)  | required only for Admin and must be an agent user; rejected for Agent callers                                             |
+| scheduledAt               | ISO 8601, future, within 60 days, 08:00–18:00 Manila, minutes 00/30, seconds 0, slot not already active for that property |
+| appointment status        | a name from `/appointment-statuses`, transition allowed                                                                   |
+| payment appointmentId     | optional; caller's own, same listing, pending or confirmed                                                                |
+| payment PATCH status      | only `refunded`, only from `paid`                                                                                         |
+| query params              | page ≥1, limit 1–50, minPrice ≤ maxPrice, unknown sort rejected                                                           |
 
 ## Security checklist for every change
 
@@ -292,9 +306,13 @@ Never store card or wallet details, payer name, phone, or address. Never log sec
 
 1 admin, 3 agents, 5 clients, ~20 Butuan listings with 3–5 photos (about half with `reservation_fee`, e.g. 5,000 sale / 2,000 rent), ~10 appointments across all four statuses (including one cancelled slot later rebooked), 5–6 sandbox `payment_logs` (two paid, one pending, one failed, one cancelled, one refunded). Types: House and Lot, Condominium, Townhouse, Apartment, Vacant Lot, Commercial. Amenities: Parking, Wi-Fi Ready, Swimming Pool, 24/7 Security, Garden, Fully Furnished, Pet Friendly, Near School. Barangay list: use **all** official Butuan City barangays (examples: Libertad, Ampayon, Doongan, Baan Km. 3, Bancasi, Ambago, Langihan, Masao, Pianing, Agusan Pequeño).
 
-## Delivery plan (from the doc; dates already slipping as of Nov 25, 2026)
+## Working mode
 
-Setup + empty Render deploy (Lugsanay) → migrations + seeds (Magbanua) → auth/users → properties/images/catalogs → favorites/inquiries/appointments/stats → global validation/error filter → payments → Swagger + Postman → frontend integration → final deploy and testing (target Dec 6). **Cut line**: if auth, properties, and appointments are not finished by Dec 2, reduce payments to the `payment_logs` table, the three read endpoints, and a seeded sandbox sample; document the webhook as designed but not deployed.
+One developer (the user) builds the whole backend with AI assistance. The partner reviews PRs and runs the Postman/Newman collection against the deployed API, and does not write backend code. Keep each task small (one module at a time) and finish it with its tests before moving on. When asked to plan, write the plan to `docs/PLAN.md`, never read the PDF in `/docs`, and do not explore the whole repo: read only `package.json` and the `src/` listing unless told otherwise.
+
+## Delivery plan (from the doc, adjusted for a solo build starting Nov 26, 2026)
+
+Bootstrap + empty Render deploy → migrations + seeds → auth/users → properties/images/catalogs → favorites/inquiries/appointments/stats → global validation/error filter → payments → Swagger + Postman → frontend integration → final deploy and testing (target Dec 6). Deploy an empty API to Render **early** (day 1 or 2) to catch TLS, cookie, CORS, and env problems before the end, and create the Render, Cloudinary, and PayMongo sandbox accounts on day 1. **Cut line**: check on the evening of Nov 30 (payments start Dec 1): if auth, properties, and appointments are not finished and passing their tests by then (the doc's original date is Dec 2), reduce payments to the `payment_logs` table, the three read endpoints, and a seeded sandbox sample; document the webhook as designed but not deployed.
 
 ## Known inconsistencies in the Rev 2 documentation (do not propagate them)
 
