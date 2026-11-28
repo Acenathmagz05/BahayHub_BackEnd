@@ -1,9 +1,11 @@
 import { Module } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
+import { ConfigModule, ConfigService } from '@nestjs/config';
 import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR, APP_PIPE } from '@nestjs/core';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
+import { TypeOrmModule } from '@nestjs/typeorm';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
+import { AuthModule } from './auth/auth.module';
 import {
   createValidationPipe,
   GlobalExceptionFilter,
@@ -19,12 +21,26 @@ import { validateEnv } from './config/env.validation';
       isGlobal: true,
       validate: validateEnv,
     }),
+    TypeOrmModule.forRootAsync({
+      inject: [ConfigService],
+      useFactory: (configService: ConfigService) => {
+        const nodeEnv = configService.get<string>('NODE_ENV', 'development');
+        return {
+          type: 'postgres',
+          url: configService.getOrThrow<string>('DATABASE_URL'),
+          ssl: nodeEnv === 'production' ? { rejectUnauthorized: false } : false,
+          synchronize: false,
+          autoLoadEntities: true,
+        };
+      },
+    }),
     ThrottlerModule.forRoot([
       {
         ttl: 60_000,
         limit: 100,
       },
     ]),
+    AuthModule,
   ],
   controllers: [AppController],
   providers: [
