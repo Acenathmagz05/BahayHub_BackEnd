@@ -4,8 +4,10 @@ export interface EnvConfig {
   NODE_ENV: 'development' | 'production' | 'test';
   PORT: number;
   DATABASE_URL: string;
+  DATABASE_URL_TEST?: string;
   JWT_ACCESS_SECRET: string;
   JWT_REFRESH_SECRET: string;
+  COOKIE_SAME_SITE: 'lax' | 'strict' | 'none';
   CORS_ORIGIN: string;
   CLOUDINARY_CLOUD_NAME: string;
   CLOUDINARY_API_KEY: string;
@@ -32,8 +34,19 @@ export const envValidationSchema = Joi.object<EnvConfig>({
       'string.pattern.base':
         '"DATABASE_URL" must be a valid PostgreSQL URL (postgres:// or postgresql://)',
     }),
+  DATABASE_URL_TEST: Joi.string()
+    .trim()
+    .pattern(/^postgres(ql)?:\/\/.+/)
+    .optional()
+    .messages({
+      'string.pattern.base':
+        '"DATABASE_URL_TEST" must be a valid PostgreSQL URL (postgres:// or postgresql://)',
+    }),
   JWT_ACCESS_SECRET: Joi.string().min(32).required(),
   JWT_REFRESH_SECRET: Joi.string().min(32).required(),
+  COOKIE_SAME_SITE: Joi.string()
+    .valid('lax', 'strict', 'none')
+    .default('lax'),
   CORS_ORIGIN: Joi.string().trim().min(1).required(),
   CLOUDINARY_CLOUD_NAME: Joi.string().trim().min(1).required(),
   CLOUDINARY_API_KEY: Joi.string().trim().min(1).required(),

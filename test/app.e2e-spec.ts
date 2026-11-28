@@ -8,19 +8,29 @@ import {
   MinLength,
   ValidateNested,
 } from 'class-validator';
+import dotenv from 'dotenv';
 import request from 'supertest';
 import { App } from 'supertest/types';
 import { Public } from './../src/common';
 
 function seedTestEnv(): void {
-  process.env.NODE_ENV ??= 'test';
+  dotenv.config({ quiet: true });
+  const testDbUrl =
+    process.env.DATABASE_URL_TEST ??
+    'postgresql://postgres:postgres@localhost:5432/bahayhub_test';
+
+  if (/\/bahayhub_dev(\?|$)/i.test(testDbUrl)) {
+    throw new Error('Refusing to run e2e tests against bahayhub_dev');
+  }
+
+  process.env.NODE_ENV = 'test';
   process.env.PORT ??= '3000';
-  process.env.DATABASE_URL ??=
-    'postgresql://user:password@localhost:5432/bahayhub_test';
+  process.env.DATABASE_URL = testDbUrl;
   process.env.JWT_ACCESS_SECRET ??=
     'test-access-secret-must-be-at-least-32-chars';
   process.env.JWT_REFRESH_SECRET ??=
     'test-refresh-secret-must-be-at-least-32-chars';
+  process.env.COOKIE_SAME_SITE ??= 'lax';
   process.env.CORS_ORIGIN ??= 'http://localhost:5173';
   process.env.CLOUDINARY_CLOUD_NAME ??= 'test-cloud';
   process.env.CLOUDINARY_API_KEY ??= 'test-api-key';
