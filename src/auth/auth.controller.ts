@@ -43,6 +43,12 @@ export class AuthController {
   @Public()
   @Post('register')
   @HttpCode(HttpStatus.CREATED)
+  @Throttle({
+    default: {
+      limit: 5,
+      ttl: 60_000,
+    },
+  })
   @ApiOperation({ summary: 'Register a new client account' })
   @ApiResponse({ status: 201, type: AuthResponseDto })
   async register(
@@ -108,18 +114,17 @@ export class AuthController {
     };
   }
 
+  @Public()
   @Post('logout')
   @HttpCode(HttpStatus.OK)
-  @ApiBearerAuth()
   @ApiOperation({ summary: 'Revoke refresh token and clear cookie' })
   @ApiResponse({ status: 200, type: LogoutResponseDto })
   async logout(
-    @CurrentUser() user: RequestUser,
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ): Promise<LogoutResponseDto> {
     const rawRefreshToken = this.extractRefreshCookie(req);
-    await this.authService.logout(user.id, rawRefreshToken);
+    await this.authService.logout(rawRefreshToken);
     res.clearCookie(REFRESH_COOKIE_NAME, this.getBaseCookieOptions());
     return { loggedOut: true };
   }
@@ -154,7 +159,7 @@ export class AuthController {
 
     return {
       httpOnly: true,
-      secure: nodeEnv === 'production',
+      secure: nodeEnv === 'production' || sameSite === 'none',
       sameSite,
       path: REFRESH_COOKIE_PATH,
     };
